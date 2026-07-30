@@ -1,0 +1,18 @@
+# Sensitive API and Credential Files
+.env
+credentials.json
+token.json
+
+# Python Virtual Environment
+venv/
+__pycache__/
+
+# PyInstaller Build Folders
+build/
+dist/
+*.spec
+dist.zip
+
+# App Temp Folders
+temp_processing/
+output_excel/
