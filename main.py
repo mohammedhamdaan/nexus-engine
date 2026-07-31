@@ -1,9 +1,11 @@
+import os
+import sys
+import json
+import shutil
+import platform
+import subprocess
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-import shutil
-import os
-import json
-import webbrowser
 from pydantic import BaseModel
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 from agent import (
@@ -19,6 +21,20 @@ from agent import (
 app = FastAPI()
 
 PIPELINES_FILE = "pipelines.json"
+
+# --- THE BULLETPROOF BROWSER FIX ---
+def force_open_browser(url):
+    """Safely forces the OS to open a link even when running in a --windowed PyInstaller app."""
+    try:
+        if platform.system() == 'Windows':
+            os.startfile(url) # The native Windows Shell command (ignores missing terminals)
+        elif platform.system() == 'Darwin':
+            subprocess.Popen(['open', url]) # The native Mac command
+        else:
+            subprocess.Popen(['xdg-open', url]) # Linux fallback
+    except Exception as e:
+        print(f"Failed to open browser: {e}")
+# -----------------------------------
 
 def load_pipelines():
     if os.path.exists(PIPELINES_FILE):
@@ -48,6 +64,7 @@ def load_pipelines():
 def save_pipelines(pipelines):
     with open(PIPELINES_FILE, "w") as f:
         json.dump(pipelines, f, indent=4)
+
 
 class PipelineRequest(BaseModel):
     name: str
@@ -105,7 +122,6 @@ async def create_pipeline(req: PipelineRequest):
         output_folder_id = output_folder.get('id')
 
         # Add the new pipeline to our tracker
-        # We point folder_id to the OUTPUT folder so the Excel sheet goes there.
         pipelines[pipeline_id] = {
             "id": pipeline_id,
             "name": req.name,
@@ -144,7 +160,7 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
     try:
         drive_service = authenticate_drive()
         
-        # [NEW FEATURE] Upload the original invoice to the "input" folder if it exists
+        # Upload the original invoice to the "input" folder if it exists
         input_folder_id = p_config.get("input_folder_id")
         if input_folder_id:
             try:
@@ -154,7 +170,6 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
                     media_body=img_media,
                     supportsAllDrives=True
                 ).execute()
-                print(f"📤 Uploaded original image {file.filename} to Drive 'input' folder.")
             except Exception as img_err:
                 print(f"⚠️ Failed to upload image to input folder: {img_err}")
                 
@@ -163,11 +178,11 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
         
         # 3. Check if it's a legacy folder or a new custom folder
         if pipeline == "general":
-            file_id = "1gqBbw6Do5NSHhd8uwz-9GJsIr1wcRHNu" # Exact General ID
+            file_id = "1gqBbw6Do5NSHhd8uwz-9GJsIr1wcRHNu" 
         elif pipeline == "robot":
-            file_id = "YOUR_ROBOT_SHEET_ID_HERE" # Exact Robot ID
+            file_id = "YOUR_ROBOT_SHEET_ID_HERE" 
         else:
-            # Custom folder (like "Ammar"): Search inside the new Drive folder
+            # Custom folder: Search inside the new Drive folder
             query = f"name='{master_name}' and '{output_parent_id}' in parents and trashed=false"
             results = drive_service.files().list(
                 q=query, 
@@ -188,14 +203,12 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
                 done = False
                 while not done:
                     _, done = downloader.next_chunk()
-            print(f"📥 Downloaded existing file (ID: {file_id})")
             
             if not sheet_url:
                 file_info = drive_service.files().get(fileId=file_id, fields="webViewLink", supportsAllDrives=True).execute()
                 sheet_url = file_info.get("webViewLink")
         else:
             if os.path.exists(master_path): os.remove(master_path)
-            print(f"⚠️ {master_name} not found. Will create new.")
 
         # 5. Process the document
         success = process_document(save_path, master_path, is_robot_pipeline=is_robot)
@@ -211,9 +224,8 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
                     media_body=media, 
                     supportsAllDrives=True
                 ).execute()
-                print(f"✅ SUCCESSFULLY UPDATED file (ID: {file_id})")
             else:
-                # Create brand new sheet in the new folder
+                # Create brand new sheet
                 file_metadata = {'name': master_name, 'parents': [output_parent_id]}
                 new_file = drive_service.files().create(
                     body=file_metadata, 
@@ -222,12 +234,13 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
                     fields="id, webViewLink"
                 ).execute()
                 sheet_url = new_file.get("webViewLink")
-                print(f"✅ SUCCESSFULLY CREATED new file: {master_name}")
             
-            # Cleanup and open browser
+            # Cleanup
             if os.path.exists(save_path): os.remove(save_path)
+            
+            # Use the new bulletproof Windows native command
             if sheet_url:
-                webbrowser.open(sheet_url)
+                force_open_browser(sheet_url)
             
             return {"status": "success", "pipeline": pipeline, "sheet_url": sheet_url}
         else:
@@ -235,6 +248,5 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
             return {"status": "error", "message": "Extraction or local save failed."}
 
     except Exception as e:
-        print(f"❌ Process failed: {str(e)}")
         if os.path.exists(save_path): os.remove(save_path)
         return {"status": "error", "message": f"Process failed: {str(e)}"}
