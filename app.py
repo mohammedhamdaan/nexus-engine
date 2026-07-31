@@ -5,31 +5,44 @@ import os
 import sys
 import time
 import socket
+import shutil
 import multiprocessing
 
-# --- FIX FOR MAC FINDER ---
-if getattr(sys, 'frozen', False):
-    if sys.platform == "darwin":
-        bundle_dir = os.path.abspath(os.path.join(os.path.dirname(sys.executable), '../../..'))
-        os.chdir(bundle_dir)
-    else:
-        os.chdir(os.path.dirname(sys.executable))
+# --- THE "STANDALONE APP" FIX ---
+# 1. Find the internal hidden folder where PyInstaller stores bundled files
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    bundled_dir = sys._MEIPASS
 else:
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
-# ---------------------------
+    bundled_dir = os.path.dirname(os.path.abspath(__file__))
+
+# 2. Find the Mac's safe background application folder
+app_data_dir = os.path.expanduser("~/Library/Application Support/NexusEngine")
+os.makedirs(app_data_dir, exist_ok=True)
+
+# 3. Copy our config files from the hidden bundle into the safe folder
+files_to_copy = ['.env', 'credentials.json', 'token.json']
+for file_name in files_to_copy:
+    src = os.path.join(bundled_dir, file_name)
+    dst = os.path.join(app_data_dir, file_name)
+    # We overwrite to ensure friends get your latest API keys
+    if os.path.exists(src):
+        try:
+            shutil.copy2(src, dst)
+        except Exception:
+            pass
+
+# 4. Change the Current Working Directory to the safe folder.
+# Now, whenever Python saves pipelines.json or temp_processing, it goes safely here!
+os.chdir(app_data_dir)
+# --------------------------------
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from main import app as backend_app
 
-def get_base_path():
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        return sys._MEIPASS
-    return os.path.abspath(os.path.dirname(__file__))
-
 def setup_app():
-    base_path = get_base_path()
-    FRONTEND_DIST_DIR = os.path.join(base_path, "nexus-frontend", "dist")
+    # The frontend UI is static, so we load it directly from the bundled hidden folder
+    FRONTEND_DIST_DIR = os.path.join(bundled_dir, "nexus-frontend", "dist")
 
     if os.path.exists(FRONTEND_DIST_DIR):
         backend_app.mount("/", StaticFiles(directory=FRONTEND_DIST_DIR, html=True), name="static")
@@ -41,7 +54,7 @@ def start_server():
 
 def wait_for_server():
     """Wait until port 8000 is open to ensure Uvicorn has fully started."""
-    for _ in range(50):  # Wait up to 5 seconds
+    for _ in range(50):
         try:
             with socket.create_connection(('127.0.0.1', 8000), timeout=0.1):
                 return True
@@ -53,14 +66,14 @@ if __name__ == '__main__':
     multiprocessing.freeze_support()
     setup_app()
     
-    # Start the FastAPI server in a background thread
     server_thread = threading.Thread(target=start_server, daemon=True)
     server_thread.start()
 
-    # WAIT for the server to be ready before showing the window
     wait_for_server()
 
-    # Create and launch the Native Desktop Window
+    # Disable pywebview's default behavior that traps external links inside the app window
+    webview.settings['OPEN_EXTERNAL_LINKS_IN_BROWSER'] = True
+
     window = webview.create_window(
         'Nexus Engine', 
         'http://127.0.0.1:8000', 
@@ -69,5 +82,4 @@ if __name__ == '__main__':
         min_size=(1000, 600)
     )
     
-    # Force debug OFF and clear cached WebKit states that keep the inspector open
     webview.start(debug=False, private_mode=False)

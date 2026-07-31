@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { UploadCloud, Loader2, FileText, Check, Radio, Server, Folder, Plus } from 'lucide-react';
+import { UploadCloud, Loader2, FileText, Check, Radio, Server, Folder, Plus, ExternalLink } from 'lucide-react';
 
 export default function App() {
   const [files, setFiles] = useState([]);
@@ -19,11 +19,6 @@ export default function App() {
       })
       .catch(err => {
         console.warn("Backend not found. Loading mock data for UI preview.");
-        setPipelines({
-          "general": { id: "general", name: "General" },
-          "robot": { id: "robot", name: "Robot" }
-        });
-        setPipeline('general');
       });
   }, []);
 
@@ -48,13 +43,7 @@ export default function App() {
         setErrorMsg(data.message);
       }
     } catch (err) {
-      console.warn("Backend not found. Simulating folder creation for UI preview.");
-      const newId = newPipelineName.trim().toLowerCase().replace(/\s+/g, "_");
-      const mockPipeline = { id: newId, name: newPipelineName.trim() };
-      setPipelines(prev => ({ ...prev, [newId]: mockPipeline }));
-      setPipeline(newId);
-      setNewPipelineName("");
-      setIsCreating(false);
+      setErrorMsg("Error connecting to server.");
     }
   };
 
@@ -74,25 +63,24 @@ export default function App() {
       const result = await response.json();
       
       if (response.ok && result.status === 'success') {
-        setFiles(prev => prev.map(f => f.name === file.name ? { ...f, status: 'completed' } : f));
-        
+        // Force the link to open in an external browser using target="_blank"
+        // Pywebview settings in app.py will catch this and route it to Edge/Chrome
         if (result.sheet_url) {
-            // Delay opening the tab by 2 seconds to allow Google Drive to clear its cache
-            // Also append a random timestamp to force the browser to bypass local cache
-            setTimeout(() => {
-                const cacheBusterUrl = result.sheet_url + "&t=" + new Date().getTime();
-                window.open(cacheBusterUrl, "_blank");
-            }, 2000);
+            const link = document.createElement('a');
+            link.href = result.sheet_url;
+            link.target = '_blank';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
+        
+        setFiles(prev => prev.map(f => f.name === file.name ? { ...f, status: 'completed', url: result.sheet_url } : f));
         return { success: true };
       }
       throw new Error("Upload failed");
     } catch (error) {
-      console.warn("Backend not found. Simulating successful upload for UI preview.");
-      setTimeout(() => {
-        setFiles(prev => prev.map(f => f.name === file.name ? { ...f, status: 'completed' } : f));
-      }, 1500); // Simulate upload delay
-      return { success: true };
+      setFiles(prev => prev.map(f => f.name === file.name ? { ...f, status: 'error' } : f));
+      return { success: false };
     }
   };
 
@@ -101,7 +89,6 @@ export default function App() {
     const newFileObjects = fileList.map(file => ({ id: Math.random(), name: file.name, status: 'uploading' }));
     setFiles(prev => [...prev, ...newFileObjects]);
     
-    // Process files sequentially to prevent Excel overwrite conflicts
     for (const f of fileList) {
         await uploadToBackend(f);
     }
@@ -170,7 +157,14 @@ export default function App() {
             {files.map(f => (
               <div key={f.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                 <span className="flex items-center gap-2"><FileText size={16}/> {f.name}</span>
-                {f.status === 'uploading' ? <Loader2 className="animate-spin text-blue-500" /> : <Check className="text-green-500" />}
+                
+                {/* Status Area */}
+                <div className="flex items-center gap-3">
+                    {f.status === 'uploading' && <Loader2 className="animate-spin text-blue-500" />}
+                    {f.status === 'completed' && <Check className="text-green-500" />}
+                    {f.status === 'error' && <span className="text-red-500 text-xs font-medium">Failed</span>}
+                </div>
+
               </div>
             ))}
           </div>
