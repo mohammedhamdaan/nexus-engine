@@ -65,7 +65,6 @@ def save_pipelines(pipelines):
     with open(PIPELINES_FILE, "w") as f:
         json.dump(pipelines, f, indent=4)
 
-
 class PipelineRequest(BaseModel):
     name: str
 
@@ -176,13 +175,14 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
         file_id = None
         sheet_url = None
         
-        # 3. Check if it's a legacy folder or a new custom folder
+        # 3. Resolve the Google Sheet ID dynamically or use hardcoded IDs
         if pipeline == "general":
             file_id = "1gqBbw6Do5NSHhd8uwz-9GJsIr1wcRHNu" 
         elif pipeline == "robot":
-            file_id = "YOUR_ROBOT_SHEET_ID_HERE" 
+            # Using the exact ID you provided!
+            file_id = "1xCV6zmFPlaHL3sInZLJH4HqZDd7CuKBw"
         else:
-            # Custom folder: Search inside the new Drive folder
+            # Custom folder: Search inside the Drive folder automatically
             query = f"name='{master_name}' and '{output_parent_id}' in parents and trashed=false"
             results = drive_service.files().list(
                 q=query, 
@@ -210,7 +210,7 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
         else:
             if os.path.exists(master_path): os.remove(master_path)
 
-        # 5. Process the document
+        # 5. Process the document using the Agent
         success = process_document(save_path, master_path, is_robot_pipeline=is_robot)
         
         # 6. Upload back to Drive
@@ -238,7 +238,7 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
             # Cleanup
             if os.path.exists(save_path): os.remove(save_path)
             
-            # Use the new bulletproof Windows native command
+            # Use the new bulletproof Windows native command to open the sheet immediately
             if sheet_url:
                 force_open_browser(sheet_url)
             
