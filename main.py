@@ -24,6 +24,16 @@ app = FastAPI()
 
 PIPELINES_FILE = "pipelines.json"
 
+# --- NEW: SAFE FILE DELETION ---
+def safe_remove(file_path):
+    """Safely delete temporary files without crashing if Windows locks them."""
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    except Exception:
+        pass
+# -------------------------------
+
 # --- THE BULLETPROOF BROWSER FIX ---
 def force_open_browser(url):
     """Safely forces the OS to open a link even when running in a --windowed PyInstaller app."""
@@ -212,9 +222,6 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
             if os.path.exists(master_path): os.remove(master_path)
             
             # --- THE FINAL FIX FOR BRAND NEW CUSTOM FOLDERS ---
-            # AI Agents crash if they don't see expected columns/headers in the Excel sheet.
-            # We fix this by downloading the working "General" sheet, wiping its old data,
-            # and feeding it to the AI as a perfect blank template with all the correct headers!
             try:
                 general_id = "1gqBbw6Do5NSHhd8uwz-9GJsIr1wcRHNu"
                 request = drive_service.files().get_media(fileId=general_id, supportsAllDrives=True)
@@ -261,8 +268,8 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
                 ).execute()
                 sheet_url = new_file.get("webViewLink")
             
-            # Cleanup
-            if os.path.exists(save_path): os.remove(save_path)
+            # Use the new safe_remove function to bypass Windows locks!
+            safe_remove(save_path)
             
             # Use the bulletproof Windows native command to open the sheet immediately
             if sheet_url:
@@ -270,12 +277,13 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
             
             return {"status": "success", "pipeline": pipeline, "sheet_url": sheet_url}
         else:
-            if os.path.exists(save_path): os.remove(save_path)
+            safe_remove(save_path)
             return {"status": "error", "message": "Extraction or local save failed."}
 
     except Exception as e:
         # If it crashes, immediately write a log file so we know exactly why
         with open("crash_log.txt", "w") as f:
             f.write(traceback.format_exc())
-        if os.path.exists(save_path): os.remove(save_path)
+        
+        safe_remove(save_path)
         return {"status": "error", "message": f"Process failed: {str(e)}"}
