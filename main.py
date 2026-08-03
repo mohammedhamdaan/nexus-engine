@@ -4,7 +4,8 @@ import json
 import shutil
 import platform
 import subprocess
-import openpyxl  # <--- Added to handle brand new custom folders
+import traceback
+import openpyxl
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -195,7 +196,7 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
                 file_id = items[0]['id']
                 sheet_url = items[0].get('webViewLink')
 
-        # 4. Download if the file exists, otherwise start fresh
+        # 4. Download if the file exists, otherwise create the perfect template!
         if file_id:
             request = drive_service.files().get_media(fileId=file_id, supportsAllDrives=True)
             with open(master_path, 'wb') as f:
@@ -209,11 +210,31 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
                 sheet_url = file_info.get("webViewLink")
         else:
             if os.path.exists(master_path): os.remove(master_path)
-            # --- THE MISSING FIX FOR CUSTOM FOLDERS ---
-            # Generate a blank Excel file locally so process_document has something to open!
-            wb = openpyxl.Workbook()
-            wb.save(master_path)
-            # ------------------------------------------
+            
+            # --- THE FINAL FIX FOR BRAND NEW CUSTOM FOLDERS ---
+            # AI Agents crash if they don't see expected columns/headers in the Excel sheet.
+            # We fix this by downloading the working "General" sheet, wiping its old data,
+            # and feeding it to the AI as a perfect blank template with all the correct headers!
+            try:
+                general_id = "1gqBbw6Do5NSHhd8uwz-9GJsIr1wcRHNu"
+                request = drive_service.files().get_media(fileId=general_id, supportsAllDrives=True)
+                with open(master_path, 'wb') as f:
+                    downloader = MediaIoBaseDownload(f, request)
+                    done = False
+                    while not done:
+                        _, done = downloader.next_chunk()
+                
+                # Now we wipe the old data, leaving only the headers in Row 1
+                wb = openpyxl.load_workbook(master_path)
+                ws = wb.active
+                if ws.max_row > 1:
+                    ws.delete_rows(2, ws.max_row - 1)
+                wb.save(master_path)
+            except Exception as template_err:
+                print(f"Failed to clone template: {template_err}")
+                wb = openpyxl.Workbook()
+                wb.save(master_path)
+            # -------------------------------------------------
 
         # 5. Process the document using the Agent
         success = process_document(save_path, master_path, is_robot_pipeline=is_robot)
@@ -243,7 +264,7 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
             # Cleanup
             if os.path.exists(save_path): os.remove(save_path)
             
-            # Use the new bulletproof Windows native command to open the sheet immediately
+            # Use the bulletproof Windows native command to open the sheet immediately
             if sheet_url:
                 force_open_browser(sheet_url)
             
@@ -253,5 +274,8 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
             return {"status": "error", "message": "Extraction or local save failed."}
 
     except Exception as e:
+        # If it crashes, immediately write a log file so we know exactly why
+        with open("crash_log.txt", "w") as f:
+            f.write(traceback.format_exc())
         if os.path.exists(save_path): os.remove(save_path)
         return {"status": "error", "message": f"Process failed: {str(e)}"}
