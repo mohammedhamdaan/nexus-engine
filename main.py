@@ -4,6 +4,7 @@ import json
 import shutil
 import platform
 import subprocess
+import openpyxl  # <--- Added to handle brand new custom folders
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -27,7 +28,7 @@ def force_open_browser(url):
     """Safely forces the OS to open a link even when running in a --windowed PyInstaller app."""
     try:
         if platform.system() == 'Windows':
-            os.startfile(url) # The native Windows Shell command (ignores missing terminals)
+            os.startfile(url) # The native Windows Shell command
         elif platform.system() == 'Darwin':
             subprocess.Popen(['open', url]) # The native Mac command
         else:
@@ -179,7 +180,6 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
         if pipeline == "general":
             file_id = "1gqBbw6Do5NSHhd8uwz-9GJsIr1wcRHNu" 
         elif pipeline == "robot":
-            # Using the exact ID you provided!
             file_id = "1xCV6zmFPlaHL3sInZLJH4HqZDd7CuKBw"
         else:
             # Custom folder: Search inside the Drive folder automatically
@@ -209,6 +209,11 @@ async def upload_file(file: UploadFile = File(...), pipeline: str = Form(...)):
                 sheet_url = file_info.get("webViewLink")
         else:
             if os.path.exists(master_path): os.remove(master_path)
+            # --- THE MISSING FIX FOR CUSTOM FOLDERS ---
+            # Generate a blank Excel file locally so process_document has something to open!
+            wb = openpyxl.Workbook()
+            wb.save(master_path)
+            # ------------------------------------------
 
         # 5. Process the document using the Agent
         success = process_document(save_path, master_path, is_robot_pipeline=is_robot)
